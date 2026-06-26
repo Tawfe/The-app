@@ -6,13 +6,10 @@ import {
   StyleSheet,
   Animated,
   StatusBar,
-  Platform,
+  Vibration,
 } from 'react-native';
 import {SafeAreaProvider, SafeAreaView} from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Sound from 'react-native-sound';
-
-Sound.setCategory('Playback');
 
 const SCORES_KEY = 'tap_fast_scores';
 const MAX_SCORES = 5;
@@ -29,20 +26,6 @@ const BG: Record<GameState, string> = {
 
 const formatMs = (ms: number) => `${ms} ms`;
 
-const loadSound = (file: string): Sound =>
-  new Sound(
-    Platform.OS === 'android' ? file : `sounds/${file}`,
-    Platform.OS === 'android' ? Sound.MAIN_BUNDLE : Sound.MAIN_BUNDLE,
-    (err: Error | null) => {
-      if (err) console.log('Sound load error', file, err);
-    },
-  );
-
-const playSound = (sound: Sound | null) => {
-  if (!sound) return;
-  sound.stop(() => sound.play());
-};
-
 export default function App() {
   const [state, setState] = useState<GameState>('idle');
   const [reactionTime, setReactionTime] = useState<number | null>(null);
@@ -51,21 +34,10 @@ export default function App() {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
-  const sndGo = useRef<Sound | null>(null);
-  const sndTap = useRef<Sound | null>(null);
-  const sndEarly = useRef<Sound | null>(null);
-  const sndBest = useRef<Sound | null>(null);
-
   useEffect(() => {
     loadScores();
-    sndGo.current = loadSound('go.wav');
-    sndTap.current = loadSound('tap.wav');
-    sndEarly.current = loadSound('early.wav');
-    sndBest.current = loadSound('best.wav');
-
     return () => {
       if (timer.current) clearTimeout(timer.current);
-      [sndGo, sndTap, sndEarly, sndBest].forEach(r => r.current?.release());
     };
   }, []);
 
@@ -92,7 +64,7 @@ export default function App() {
   const handlePress = useCallback(() => {
     if (state === 'waiting') {
       if (timer.current) clearTimeout(timer.current);
-      playSound(sndEarly.current);
+      Vibration.vibrate([0, 80, 60, 80]); // double buzz = fail
       setState('early');
       return;
     }
@@ -101,11 +73,7 @@ export default function App() {
       const ms = Date.now() - startTime.current;
       setReactionTime(ms);
       saveScore(ms).then(isNewBest => {
-        if (isNewBest) {
-          playSound(sndBest.current);
-        } else {
-          playSound(sndTap.current);
-        }
+        Vibration.vibrate(isNewBest ? [0, 60, 40, 60, 40, 100] : 40); // jingle or short tap
       });
       setState('result');
       Animated.sequence([
@@ -122,7 +90,7 @@ export default function App() {
       timer.current = setTimeout(() => {
         startTime.current = Date.now();
         setState('ready');
-        playSound(sndGo.current);
+        Vibration.vibrate(30); // short buzz = go!
       }, delay);
     }
   }, [state, saveScore, scaleAnim]);
