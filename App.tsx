@@ -6,9 +6,13 @@ import {
   StyleSheet,
   Animated,
   StatusBar,
+  Platform,
 } from 'react-native';
 import {SafeAreaProvider, SafeAreaView} from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Sound from 'react-native-sound';
+
+Sound.setCategory('Playback');
 
 const SCORES_KEY = 'tap_fast_scores';
 const MAX_SCORES = 5;
@@ -25,6 +29,20 @@ const BG: Record<GameState, string> = {
 
 const formatMs = (ms: number) => `${ms} ms`;
 
+const loadSound = (file: string): Sound =>
+  new Sound(
+    Platform.OS === 'android' ? file : `sounds/${file}`,
+    Platform.OS === 'android' ? Sound.MAIN_BUNDLE : Sound.MAIN_BUNDLE,
+    (err: Error | null) => {
+      if (err) console.log('Sound load error', file, err);
+    },
+  );
+
+const playSound = (sound: Sound | null) => {
+  if (!sound) return;
+  sound.stop(() => sound.play());
+};
+
 export default function App() {
   const [state, setState] = useState<GameState>('idle');
   const [reactionTime, setReactionTime] = useState<number | null>(null);
@@ -33,10 +51,21 @@ export default function App() {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
+  const sndGo = useRef<Sound | null>(null);
+  const sndTap = useRef<Sound | null>(null);
+  const sndEarly = useRef<Sound | null>(null);
+  const sndBest = useRef<Sound | null>(null);
+
   useEffect(() => {
     loadScores();
+    sndGo.current = loadSound('go.wav');
+    sndTap.current = loadSound('tap.wav');
+    sndEarly.current = loadSound('early.wav');
+    sndBest.current = loadSound('best.wav');
+
     return () => {
       if (timer.current) clearTimeout(timer.current);
+      [sndGo, sndTap, sndEarly, sndBest].forEach(r => r.current?.release());
     };
   }, []);
 
@@ -48,12 +77,14 @@ export default function App() {
   };
 
   const saveScore = useCallback(
-    async (ms: number) => {
+    async (ms: number): Promise<boolean> => {
       const updated = [...scores, ms].sort((a, b) => a - b).slice(0, MAX_SCORES);
+      const isNewBest = updated[0] === ms && (scores.length === 0 || ms < scores[0]);
       setScores(updated);
       try {
         await AsyncStorage.setItem(SCORES_KEY, JSON.stringify(updated));
       } catch {}
+      return isNewBest;
     },
     [scores],
   );
@@ -61,6 +92,7 @@ export default function App() {
   const handlePress = useCallback(() => {
     if (state === 'waiting') {
       if (timer.current) clearTimeout(timer.current);
+      playSound(sndEarly.current);
       setState('early');
       return;
     }
@@ -68,7 +100,13 @@ export default function App() {
     if (state === 'ready') {
       const ms = Date.now() - startTime.current;
       setReactionTime(ms);
-      saveScore(ms);
+      saveScore(ms).then(isNewBest => {
+        if (isNewBest) {
+          playSound(sndBest.current);
+        } else {
+          playSound(sndTap.current);
+        }
+      });
       setState('result');
       Animated.sequence([
         Animated.timing(scaleAnim, {toValue: 0.92, duration: 80, useNativeDriver: true}),
@@ -84,6 +122,7 @@ export default function App() {
       timer.current = setTimeout(() => {
         startTime.current = Date.now();
         setState('ready');
+        playSound(sndGo.current);
       }, delay);
     }
   }, [state, saveScore, scaleAnim]);
